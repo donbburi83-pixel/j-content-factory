@@ -1,0 +1,73 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // 0. Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 3. Global Helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedAdmin() {
+      // Bootstrapped admin from runtime metadata
+      return isSignedIn() && 
+             request.auth.token.email == "donbburi83@gmail.com" &&
+             request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+
+    // 2. Validation Blueprints
+    function isValidPortfolioItem(data) {
+      return data.keys().hasAll(['title', 'category', 'videoUrl', 'imageUrl']) &&
+             data.title is string && data.title.size() > 0 && data.title.size() <= 200 &&
+             data.category in ['Directing', 'Production'] &&
+             data.videoUrl is string && data.videoUrl.size() <= 500 &&
+             data.imageUrl is string && data.imageUrl.size() <= 1000 &&
+             (data.get('description', '') is string && data.get('description', '').size() <= 2000) &&
+             (data.get('order', 0) is int);
+    }
+
+    function isValidSiteConfig(data) {
+      return (data.get('primaryColor', '#aca99c') is string) &&
+             (data.get('secondaryColor', '#000000') is string) &&
+             (data.get('seoTitle', '') is string) &&
+             (data.get('seoDescription', '') is string);
+    }
+
+    // 4. Portfolio Collection
+    match /portfolio/{itemId} {
+      allow get: if true;
+      allow list: if true; 
+      
+      allow create: if isVerifiedAdmin() && 
+                       isValidId(itemId) && 
+                       isValidPortfolioItem(incoming()) &&
+                       incoming().createdAt == request.time;
+      
+      allow update: if isVerifiedAdmin() && 
+                       isValidPortfolioItem(incoming()) &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().updatedAt == request.time;
+                       
+      allow delete: if isVerifiedAdmin();
+    }
+
+    // 5. Configuration
+    match /config/{configId} {
+      allow get: if true;
+      allow list: if isVerifiedAdmin(); // Admin only list configs
+      
+      allow write: if isVerifiedAdmin() && isValidId(configId);
+    }
+  }
+}
